@@ -1,125 +1,247 @@
-use std::fs;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use jwalk::WalkDir;
 
 use crate::error::ScanError;
 use crate::scanner::node::{FileNode, NodeType};
 use crate::scanner::progress::ScanProgress;
 
-/// 全局递增 id 生成器，保证树里每个节点 id 唯一，
-/// 后续增量更新事件靠这个 id 和前端节点对应。
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// 单线程递归扫描版本。先保证正确性，跑通后再换成 jwalk 并行遍历。
-///
-/// `on_progress` 回调用于报告扫描进度：阶段1可以传 `|p| println!("{:?}", p)`，
-/// 阶段2接 Tauri 时把它换成 `|p| app_handle.emit("scan-progress", p).unwrap()` 即可。
+type EntryInfo = (u64, u64, NodeType, Option<String>);
+
 pub fn scan_directory(
     root: &Path,
     on_progress: &mut impl FnMut(ScanProgress),
 ) -> Result<FileNode, ScanError> {
+    let mut entries: HashMap<PathBuf, EntryInfo> = HashMap::new();
     let mut files_count: u64 = 0;
-    let node = scan_recursive(root, on_progress, &mut files_count)?;
 
-    on_progress(ScanProgress::Finished {
-        total_files: files_count,
-        total_size: node.total_size,
-    });
+    // skip_hidden(false)：默认会跳过 .git/.fingerprint 等隐藏目录，
+    // 磁盘清理工具必须能扫到这些占空间大户，所以关掉
+    for entry_result in WalkDir::new(root).skip_hidden(false) {
+        match entry_result {
+            Ok(entry) => {
+                let path = entry.path();
+                let id = next_id();
 
-    Ok(node)
-}
+                let file_type = entry.file_type();
+                let (node_type, size) = if file_type.is_symlink() {
+                    (NodeType::Symlink, 0)
+                } else if file_type.is_dir() {
+                    on_progress(ScanProgress::EnteredDirectory {
+                        path: path.to_string_lossy().to_string(),
+                        files_so_far: files_count,
+                    });
+                    (NodeType::Directory, 0)
+                } else {
+                    files_count += 1;
+                    let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    (NodeType::File, len)
+                };
 
-fn scan_recursive(
-    path: &Path,
-    on_progress: &mut impl FnMut(ScanProgress),
-    files_count: &mut u64,
-) -> Result<FileNode, ScanError> {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string_lossy().to_string());
-    let path_str = path.to_string_lossy().to_string();
-
-    let metadata = fs::symlink_metadata(path)?;
-
-    if metadata.is_symlink() {
-        let id = next_id();
-        return Ok(FileNode {
-            id,
-            name,
-            path: path_str,
-            node_type: NodeType::Symlink,
-            own_size: 0,
-            total_size: 0,
-            children: Vec::new(),
-            hash: None,
-            error: None,
-        });
-    }
-
-    if metadata.is_file() {
-        let id = next_id();
-        *files_count += 1;
-        let node = FileNode::new_file(id, name, path_str.clone(), metadata.len());
-        on_progress(ScanProgress::NodeCompleted {
-            id,
-            path: path_str,
-            total_size: node.total_size,
-        });
-        return Ok(node);
-    }
-
-    // 目录
-    let id = next_id();
-    let mut dir_node = FileNode::new_directory(id, name, path_str.clone());
-
-    on_progress(ScanProgress::EnteredDirectory {
-        path: path_str.clone(),
-        files_so_far: *files_count,
-    });
-
-    let entries = match fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(e) => {
-            // 权限拒绝等错误不中断整体扫描，记录在节点上并跳过
-            dir_node.error = Some(e.to_string());
-            on_progress(ScanProgress::Error {
-                path: path_str,
-                message: e.to_string(),
-            });
-            return Ok(dir_node);
-        }
-    };
-
-    let mut total: u64 = 0;
-    for entry in entries.flatten() {
-        match scan_recursive(&entry.path(), on_progress, files_count) {
-            Ok(child) => {
-                total += child.total_size;
-                dir_node.children.push(child);
+                entries.insert(path, (id, size, node_type, None));
             }
             Err(e) => {
+                let path_str = e
+                    .path()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string());
                 on_progress(ScanProgress::Error {
-                    path: entry.path().to_string_lossy().to_string(),
+                    path: path_str,
                     message: e.to_string(),
                 });
             }
         }
     }
 
-    dir_node.total_size = total;
-    // 子节点按大小降序排列，方便命令行直接看到"谁占用最大"
-    dir_node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+    let mut children_index: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    for path in entries.keys() {
+        if let Some(parent) = path.parent() {
+            children_index
+                .entry(parent.to_path_buf())
+                .or_default()
+                .push(path.clone());
+        }
+    }
 
-    on_progress(ScanProgress::NodeCompleted {
-        id,
-        path: dir_node.path.clone(),
-        total_size: dir_node.total_size,
+    let root_node = build_tree(root, &entries, &children_index, on_progress)?;
+
+    on_progress(ScanProgress::Finished {
+        total_files: files_count,
+        total_size: root_node.total_size,
     });
 
-    Ok(dir_node)
+    Ok(root_node)
+}
+
+fn build_tree(
+    path: &Path,
+    entries: &HashMap<PathBuf, EntryInfo>,
+    children_index: &HashMap<PathBuf, Vec<PathBuf>>,
+    on_progress: &mut impl FnMut(ScanProgress),
+) -> Result<FileNode, ScanError> {
+    let (id, own_size, node_type, error) = entries.get(path).cloned().ok_or_else(|| {
+        ScanError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("节点丢失: {}", path.display()),
+        ))
+    })?;
+
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string_lossy().to_string());
+    let path_str = path.to_string_lossy().to_string();
+
+    if node_type != NodeType::Directory {
+        return Ok(FileNode {
+            id,
+            name,
+            path: path_str,
+            node_type,
+            own_size,
+            total_size: own_size,
+            children: Vec::new(),
+            hash: None,
+            error,
+        });
+    }
+
+    let mut children: Vec<FileNode> = Vec::new();
+    let mut total: u64 = 0;
+
+    if let Some(child_paths) = children_index.get(path) {
+        let mut sorted_children = child_paths.clone();
+        sorted_children.sort();
+
+        for child_path in &sorted_children {
+            let child = build_tree(child_path, entries, children_index, on_progress)?;
+            total += child.total_size;
+            children.push(child);
+        }
+    }
+
+    children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+
+    let node = FileNode {
+        id,
+        name,
+        path: path_str,
+        node_type: NodeType::Directory,
+        own_size: 0,
+        total_size: total,
+        children,
+        hash: None,
+        error,
+    };
+
+    on_progress(ScanProgress::NodeCompleted {
+        id: node.id,
+        path: node.path.clone(),
+        total_size: node.total_size,
+    });
+
+    Ok(node)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn make_temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "miydisk_test_{}_{}",
+            tag,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn scans_flat_files_and_sums_size() {
+        let root = make_temp_dir("flat");
+        fs::write(root.join("a.txt"), vec![0u8; 100]).unwrap();
+        fs::write(root.join("b.txt"), vec![0u8; 200]).unwrap();
+
+        let mut events = Vec::new();
+        let node = scan_directory(&root, &mut |e| events.push(e)).unwrap();
+
+        assert_eq!(node.total_size, 300);
+        assert_eq!(node.children.len(), 2);
+        assert_eq!(node.children[0].total_size, 200);
+        assert_eq!(node.children[1].total_size, 100);
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn sums_nested_directories_recursively() {
+        let root = make_temp_dir("nested");
+        let sub = root.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(root.join("top.bin"), vec![0u8; 50]).unwrap();
+        fs::write(sub.join("deep.bin"), vec![0u8; 150]).unwrap();
+
+        let node = scan_directory(&root, &mut |_| {}).unwrap();
+
+        assert_eq!(node.total_size, 200);
+
+        let sub_node = node
+            .children
+            .iter()
+            .find(|c| c.name == "sub")
+            .expect("应找到子目录节点");
+        assert_eq!(sub_node.total_size, 150);
+        assert_eq!(sub_node.own_size, 0);
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn scans_hidden_files_too() {
+        let root = make_temp_dir("hidden");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join(".git").join("config"), vec![0u8; 77]).unwrap();
+        fs::write(root.join(".hidden_file"), vec![0u8; 33]).unwrap();
+
+        let node = scan_directory(&root, &mut |_| {}).unwrap();
+
+        assert_eq!(node.total_size, 110);
+        assert!(node.children.iter().any(|c| c.name == ".git"));
+        assert!(node.children.iter().any(|c| c.name == ".hidden_file"));
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn emits_finished_event_with_correct_file_count() {
+        let root = make_temp_dir("events");
+        fs::write(root.join("x.txt"), vec![0u8; 10]).unwrap();
+        fs::write(root.join("y.txt"), vec![0u8; 10]).unwrap();
+        fs::create_dir_all(root.join("empty_dir")).unwrap();
+
+        let mut finished_count = None;
+        scan_directory(&root, &mut |e| {
+            if let ScanProgress::Finished { total_files, .. } = e {
+                finished_count = Some(total_files);
+            }
+        })
+        .unwrap();
+
+        assert_eq!(finished_count, Some(2));
+
+        fs::remove_dir_all(&root).unwrap();
+    }
 }
