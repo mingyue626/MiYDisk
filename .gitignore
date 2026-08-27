@@ -1,0 +1,23 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+# 注：MiYDisk 是可执行程序而非库，Cargo.lock 应提交到仓库以保证构建可复现
+
+# Tauri (阶段2接入后会用到)
+/src-tauri/target
+/dist
+/node_modules
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志/临时文件
+*.log
+.env

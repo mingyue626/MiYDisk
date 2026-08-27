@@ -1,0 +1,20 @@
+[package]
+name = "miydisk"
+version = "0.1.0"
+edition = "2021"
+description = "诚实、轻量、快的磁盘空间可视化清理工具"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/<your-username>/MiYDisk"
+
+[[bin]]
+name = "miydisk"
+path = "src/main.rs"
+
+[lib]
+name = "miydisk"
+path = "src/lib.rs"
+
+[dependencies]
+jwalk = "0.8"
+blake3 = "=1.5.4"
+serde = { version = "1", features = ["derive"] }
