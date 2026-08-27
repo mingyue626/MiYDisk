@@ -1,0 +1,32 @@
+body {
+  font-family: -apple-system, "Segoe UI", sans-serif;
+  margin: 2rem;
+  color: #222;
+}
+
+.controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+#path-input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+}
+
+#status {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+#result-list {
+  list-style: none;
+  padding: 0;
+  font-family: monospace;
+}
+
+#result-list li {
+  padding: 0.3rem 0;
+  border-bottom: 1px solid #eee;
+}
