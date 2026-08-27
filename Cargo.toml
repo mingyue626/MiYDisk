@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "诚实、轻量、快的磁盘空间可视化清理工具"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/<your-username>/MiYDisk"
+repository = "https://github.com/mingyue626/MiYDisk"
 
 [[bin]]
 name = "miydisk"
