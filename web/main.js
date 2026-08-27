@@ -54,5 +54,8 @@ scanBtn.addEventListener("click", () => {
   }
   statusEl.textContent = "开始扫描…";
   listEl.innerHTML = "";
-  invoke("start_scan", { path });
+  invoke("start_scan", { path }).catch((err) => {
+    statusEl.textContent = `调用失败：${err}`;
+    console.error(err);
+  });
 });
