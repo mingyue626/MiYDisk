@@ -25,6 +25,7 @@ fn start_scan(app: tauri::AppHandle, path: String) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![start_scan])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

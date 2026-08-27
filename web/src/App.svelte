@@ -1,5 +1,6 @@
 <script>
   import { onMount } from "svelte";
+  import { open } from "@tauri-apps/plugin-dialog";
   import TreeNode from "./Treemap.svelte";
   import { humanSize } from "./format.js";
 
@@ -30,6 +31,13 @@
     });
   });
 
+  async function pickFolder() {
+    const selected = await open({ directory: true, multiple: false });
+    if (typeof selected === "string") {
+      path = selected;
+    }
+  }
+
   function startScan() {
     const p = path.trim();
     if (!p) {
@@ -48,6 +56,7 @@
   <h1>MiYDisk</h1>
   <div class="controls">
     <input type="text" placeholder="要扫描的目录路径，如 C:\Users\me" bind:value={path} />
+    <button on:click={pickFolder}>浏览…</button>
     <button on:click={startScan}>开始扫描</button>
   </div>
   <p class="status">{status}</p>
