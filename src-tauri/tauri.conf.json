@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.miydisk.app",
   "build": {
-    "frontendDist": "../web"
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../web" },
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../web" },
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../web/dist"
   },
   "app": {
     "withGlobalTauri": true,

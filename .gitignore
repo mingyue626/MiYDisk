@@ -4,9 +4,10 @@
 *.pdb
 # 注：MiYDisk 是可执行程序而非库，Cargo.lock 应提交到仓库以保证构建可复现
 
-# Tauri (阶段2接入后会用到)
+# Tauri / 前端构建
 /src-tauri/target
-/dist
+/web/dist
+/web/node_modules
 /node_modules
 
 # IDE
