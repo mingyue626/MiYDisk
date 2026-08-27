@@ -28,7 +28,10 @@ fn main() {
         ScanProgress::Error { path, message } => {
             eprintln!("[跳过] {} - {}", path, message);
         }
-        ScanProgress::Finished { total_files, total_size } => {
+        ScanProgress::Finished {
+            total_files,
+            total_size,
+        } => {
             println!(
                 "\n扫描完成：共 {} 个文件，总大小 {}",
                 total_files,
@@ -55,7 +58,7 @@ fn main() {
 fn print_top_n(root: &FileNode, n: usize) {
     let mut all: Vec<&FileNode> = Vec::new();
     collect_all(root, &mut all);
-    all.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+    all.sort_by_key(|a| std::cmp::Reverse(a.total_size));
 
     for (i, node) in all.iter().take(n).enumerate() {
         println!(

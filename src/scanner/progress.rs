@@ -5,7 +5,11 @@ pub enum ScanProgress {
     /// 发现一个新目录，附带当前已扫描的文件计数
     EnteredDirectory { path: String, files_so_far: u64 },
     /// 某个节点扫描完成（含递归汇总大小）
-    NodeCompleted { id: u64, path: String, total_size: u64 },
+    NodeCompleted {
+        id: u64,
+        path: String,
+        total_size: u64,
+    },
     /// 整体扫描完成
     Finished { total_files: u64, total_size: u64 },
     /// 某个节点扫描出错（如权限拒绝），不中断整体扫描

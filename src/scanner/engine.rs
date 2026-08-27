@@ -128,7 +128,7 @@ fn build_tree(
         }
     }
 
-    children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+    children.sort_by_key(|c| std::cmp::Reverse(c.total_size));
 
     let node = FileNode {
         id,
