@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod commands;
+
+use commands::{delete_permanently, move_to_trash, reveal_in_explorer};
 use miydisk::{scan_directory, ScanProgress};
 use tauri::Emitter;
 
@@ -26,7 +29,12 @@ fn start_scan(app: tauri::AppHandle, path: String) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![start_scan])
+        .invoke_handler(tauri::generate_handler![
+            start_scan,
+            reveal_in_explorer,
+            move_to_trash,
+            delete_permanently
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

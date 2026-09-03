@@ -1,4 +1,5 @@
 <script>
+  import { createEventDispatcher } from "svelte";
   import { humanSize } from "./format.js";
 
   export let node;
@@ -6,6 +7,7 @@
   export let parentTotal = node ? node.total_size : 0;
   export let expandedInitially = false;
 
+  const dispatch = createEventDispatcher();
   let expanded = expandedInitially;
 
   $: hasChildren = node && node.children && node.children.length > 0;
@@ -16,6 +18,11 @@
 
   function toggle() {
     if (hasChildren) expanded = !expanded;
+  }
+
+  function handleContextMenu(e) {
+    e.preventDefault();
+    dispatch("nodecontextmenu", { node, x: e.clientX, y: e.clientY });
   }
 
   function extensionHue(name) {
@@ -35,7 +42,13 @@
       : `hsl(${extensionHue(node.name)}, 55%, 60%)`;
 </script>
 
-<div class="row" style="padding-left: {depth * 18}px">
+<div
+  class="row"
+  style="padding-left: {depth * 18}px"
+  role="button"
+  tabindex="0"
+  on:contextmenu={handleContextMenu}
+>
   <button
     class="toggle"
     class:invisible={!hasChildren}
@@ -55,7 +68,12 @@
 
 {#if expanded}
   {#each sortedChildren as child (child.id)}
-    <svelte:self node={child} depth={depth + 1} parentTotal={node.total_size} />
+    <svelte:self
+      node={child}
+      depth={depth + 1}
+      parentTotal={node.total_size}
+      on:nodecontextmenu
+    />
   {/each}
 {/if}
 
