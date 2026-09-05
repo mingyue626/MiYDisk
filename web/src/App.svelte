@@ -5,6 +5,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import ConfirmDeleteDialog from "./ConfirmDeleteDialog.svelte";
   import DetailsDialog from "./DetailsDialog.svelte";
+  import DuplicatesPanel from "./DuplicatesPanel.svelte";
   import { humanSize } from "./format.js";
   import { shouldSkipConfirm, skipConfirmForToday } from "./permanentDeletePref.js";
 
@@ -13,11 +14,12 @@
 
   let path = "";
   let status = "等待开始";
-  let tree = null;
+  let tree = null; // 完整扫描结果（根节点），展开/折叠状态由 TreeNode 自己管理
 
-  let menu = null;
-  let confirmDeleteNode = null;
-  let infoNode = null;
+  let menu = null; // { node, x, y } | null
+  let confirmDeleteNode = null; // 待永久删除确认的节点
+  let infoNode = null; // 详细信息弹窗展示的节点
+  let duplicateGroups = null; // null=面板关闭，数组=面板打开时的检测结果
 
   onMount(() => {
     listen("scan-progress", (event) => {
@@ -58,6 +60,8 @@
       status = `调用失败：${err}`;
     });
   }
+
+  // ---- 右键菜单 ----
 
   function handleNodeContextMenu(e) {
     const { node, x, y } = e.detail;
@@ -131,6 +135,53 @@
     const childrenSum = filteredChildren.reduce((s, c) => s + c.total_size, 0);
     return { ...node, children: filteredChildren, total_size: node.own_size + childrenSum };
   }
+
+  function openDuplicates() {
+    invoke("find_duplicate_files")
+      .then((groups) => {
+        duplicateGroups = groups;
+      })
+      .catch((err) => {
+        status = `查找重复文件失败：${err}`;
+      });
+  }
+
+  function closeDuplicates() {
+    duplicateGroups = null;
+  }
+
+  function handleDuplicateReveal(path) {
+    invoke("reveal_in_explorer", { path }).catch((err) => {
+      status = `打开失败：${err}`;
+    });
+  }
+
+  function handleDuplicateTrash(path) {
+    invoke("move_to_trash", { path })
+      .then(() => {
+        removeNodeByPathFromTree(path);
+        duplicateGroups = duplicateGroups
+          .map((g) => ({ ...g, paths: g.paths.filter((p) => p !== path) }))
+          .filter((g) => g.paths.length >= 2);
+      })
+      .catch((err) => {
+        status = `移到回收站失败：${err}`;
+      });
+  }
+
+  function removeNodeByPathFromTree(targetPath) {
+    if (!tree) return;
+    tree = removeAndRecalcByPath(tree, targetPath);
+  }
+
+  function removeAndRecalcByPath(node, targetPath) {
+    if (!node.children || node.children.length === 0) return node;
+    const filteredChildren = node.children
+      .filter((c) => c.path !== targetPath)
+      .map((c) => removeAndRecalcByPath(c, targetPath));
+    const childrenSum = filteredChildren.reduce((s, c) => s + c.total_size, 0);
+    return { ...node, children: filteredChildren, total_size: node.own_size + childrenSum };
+  }
 </script>
 
 <svelte:window
@@ -144,6 +195,7 @@
     <input type="text" placeholder="要扫描的目录路径，如 C:\Users\me" bind:value={path} />
     <button on:click={pickFolder}>浏览…</button>
     <button on:click={startScan}>开始扫描</button>
+    <button on:click={openDuplicates} disabled={!tree}>查找重复文件</button>
   </div>
   <p class="status">{status}</p>
 
@@ -174,6 +226,15 @@
 
 {#if infoNode}
   <DetailsDialog node={infoNode} onClose={() => (infoNode = null)} />
+{/if}
+
+{#if duplicateGroups !== null}
+  <DuplicatesPanel
+    groups={duplicateGroups}
+    onClose={closeDuplicates}
+    onReveal={handleDuplicateReveal}
+    onTrash={handleDuplicateTrash}
+  />
 {/if}
 
 <style>
